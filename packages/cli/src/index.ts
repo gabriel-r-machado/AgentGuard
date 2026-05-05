@@ -2,7 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { runAgentTests } from "@agentguard/core";
+import { runAgentTests } from "../../core/dist/index.js";
 import { formatTerminalReport, type TerminalReporter } from "./reporters.js";
 
 type Provider = "openai" | "deepseek";

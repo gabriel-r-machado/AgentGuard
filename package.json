@@ -2,6 +2,9 @@
   "name": "agentguard",
   "version": "1.0.0",
   "private": true,
+  "bin": {
+    "agentguard": "packages/cli/dist/index.js"
+  },
   "workspaces": [
     "packages/*"
   ],
@@ -9,12 +12,22 @@
     "build": "tsc -b",
     "build:core": "npm run build --workspace @agentguard/core",
     "build:cli": "npm run build --workspace @agentguard/cli",
+    "prepare": "npm run build",
+    "agentguard": "node packages/cli/dist/index.js",
+    "agentguard:init:openai": "npm run agentguard -- init --yes --provider openai --with-github-action",
+    "agentguard:init:deepseek": "npm run agentguard -- init --yes --provider deepseek --with-github-action",
+    "agentguard:test": "npm run agentguard -- test",
+    "agentguard:test:provider": "npm run agentguard -- test --execution provider",
+    "agentguard:test:ci": "npm run agentguard -- test --ci --reporter json",
     "test": "npm run test:core && npm run test:cli",
     "test:core": "npm run test --workspace @agentguard/core",
     "test:cli": "npm run test --workspace @agentguard/cli"
   },
+  "dependencies": {
+    "typescript": "^5.9.3",
+    "zod": "^3.25.76"
+  },
   "devDependencies": {
-    "@types/node": "^24.10.0",
-    "typescript": "^5.9.3"
+    "@types/node": "^24.10.0"
   }
 }

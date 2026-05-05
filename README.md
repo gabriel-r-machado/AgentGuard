@@ -1,31 +1,48 @@
 # AgentGuard
 
-Framework open source para testar respostas de agentes de IA em lote, com regras claras, sem precisar abrir chat manualmente toda vez.
+Framework open source para testar respostas de agentes de IA em lote, com regras objetivas e relatorio acionavel.
 
-## O que ele resolve
-
-Se você tem um agente (suporte, vendas, FAQ, RAG etc.), em vez de testar pergunta por pergunta no chat:
-
-1. você define uma suíte de testes
-2. roda tudo de uma vez
-3. recebe pass/fail com diagnóstico acionável
-
-Isso permite detectar regressão rápido antes de publicar mudanças de prompt, contexto, ferramentas ou modelo.
-
-## Fluxo rápido
+## Quick Start (neste repositorio)
 
 ```bash
 npm ci
 npm run build
-node packages/cli/dist/index.js init --yes --provider openai --with-github-action
+npm run agentguard:init:deepseek
+npm run agentguard:test
 ```
 
-Esse comando gera:
+Comandos de uso diario:
+
+```bash
+npm run agentguard:test
+npm run agentguard:test:provider
+npm run agentguard:test:ci
+```
+
+## Usar em qualquer outro repositorio (via GitHub)
+
+No projeto alvo:
+
+```bash
+npm i -D github:gabriel-r-machado/AgentGuard
+npx agentguard init --yes --provider deepseek --with-github-action
+npx agentguard test
+```
+
+Para rodar com provider real:
+
+```bash
+# PowerShell
+$env:DEEPSEEK_API_KEY="SUA_CHAVE"
+npx agentguard test --execution provider
+```
+
+## O que o `init` gera
 
 - `agentguard.config.ts`
 - `ai-tests/example.test.ts`
 - `.env.example`
-- `.github/workflows/agentguard.yml` (opcional com `--with-github-action`)
+- `.github/workflows/agentguard.yml` (quando usar `--with-github-action`)
 
 ## Exemplo de teste
 
@@ -41,48 +58,51 @@ testAgent("responde com saudacao", {
 });
 ```
 
-## Como rodar
+## CLI suportada hoje
 
-Modo local (`stub`, sem custo de API):
+`agentguard init`
 
-```bash
-node packages/cli/dist/index.js test
-```
+- `--yes`
+- `--provider <openai|deepseek>`
+- `--with-github-action`
 
-Modo real (chama o provider de IA):
+`agentguard test`
 
-```bash
-node packages/cli/dist/index.js test --execution provider --provider openai --model gpt-4.1-mini
-```
+- `--provider <openai|deepseek>`
+- `--model <name>`
+- `--grep <pattern>`
+- `--ci`
+- `--reporter <pretty|ci|json>`
+- `--execution <stub|provider>`
 
-CI com saída estável para automação:
+## Variaveis de ambiente
 
-```bash
-node packages/cli/dist/index.js test --ci --reporter json
-```
+Configure no `.env`:
 
-## Variáveis de ambiente
-
-Crie `.env` com base no `.env.example` e configure a chave do provider que você usa:
-
-- `OPENAI_API_KEY`
 - `DEEPSEEK_API_KEY`
+- `OPENAI_API_KEY`
 
-Boas práticas:
+Boas praticas:
 
 - nunca commitar `.env`
 - nunca expor chave real em issue/PR/chat
+- se a chave vazou, revogue e gere outra
 
 ## Exit codes
 
-- `0`: suíte passou
-- `1`: houve falha de teste
-- `2`: erro de config/runtime (ex.: chave ausente, erro de execução)
+- `0`: suite passou
+- `1`: ao menos um teste falhou
+- `2`: erro de config/runtime (ex.: chave ausente)
 
-## Scripts úteis (repositório)
+## Scripts do repositorio
 
 ```bash
 npm run build
-npm run test --workspace @agentguard/core
-npm run test --workspace @agentguard/cli
+npm run test
+npm run agentguard
+npm run agentguard:init:openai
+npm run agentguard:init:deepseek
+npm run agentguard:test
+npm run agentguard:test:provider
+npm run agentguard:test:ci
 ```
