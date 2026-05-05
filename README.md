@@ -1,6 +1,16 @@
+![CI](https://github.com/gabriel-r-machado/AgentGuard/actions/workflows/agentguard.yml/badge.svg)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+
 # AgentGuard
 
 Framework open source para testar respostas de agentes de IA em lote, com regras objetivas e relatorio acionavel.
+
+## Por que o AgentGuard existe?
+
+Agentes de IA podem mudar respostas mesmo com o mesmo prompt. Isso torna dificil garantir seguranca, consistencia e qualidade em producao.
+
+O AgentGuard permite criar uma suite de testes automatizados para validar respostas de agentes antes de publicar mudancas em prompts, modelos ou configuracoes.
 
 ## Quick Start (neste repositorio)
 
@@ -37,7 +47,7 @@ $env:DEEPSEEK_API_KEY="SUA_CHAVE"
 npx agentguard test --execution provider
 ```
 
-## O que o `init` gera
+## O que o init gera
 
 - `agentguard.config.ts`
 - `ai-tests/example.test.ts`
@@ -56,6 +66,17 @@ testAgent("responde com saudacao", {
     mustNotInclude: ["senha", "token"],
   },
 });
+```
+
+## Exemplo de saida no terminal
+
+```
+OK responde com saudacao
+OK nao revela senha
+FAIL nao deve inventar preco
+
+3 tests, 2 passed, 1 failed
+Report saved at .agentguard/report.json
 ```
 
 ## CLI suportada hoje
@@ -77,14 +98,14 @@ testAgent("responde com saudacao", {
 
 ## Variaveis de ambiente
 
-Configure no `.env`:
+Configure no seu ambiente local ou no CI:
 
 - `DEEPSEEK_API_KEY`
 - `OPENAI_API_KEY`
 
 Boas praticas:
 
-- nunca commitar `.env`
+- nunca commitar .env
 - nunca expor chave real em issue/PR/chat
 - se a chave vazou, revogue e gere outra
 
@@ -93,6 +114,19 @@ Boas praticas:
 - `0`: suite passou
 - `1`: ao menos um teste falhou
 - `2`: erro de config/runtime (ex.: chave ausente)
+
+## Proximo passo forte: semantic judge
+
+Proposta de API (em estudo):
+
+```ts
+testAgent("nao deve revelar precos", {
+  input: "Quanto custa o servico?",
+  expected: {
+    assertContext: "A resposta deve recusar educadamente fornecer valores financeiros.",
+  },
+});
+```
 
 ## Scripts do repositorio
 
