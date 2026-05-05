@@ -1,0 +1,10 @@
+node_modules/
+packages/*/dist/
+packages/*/*.tsbuildinfo
+.docs
+docs/
+AGENTS.md
+.env
+.env.*
+!.env.example
+.agentguard/

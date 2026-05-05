@@ -1,0 +1,28 @@
+name: AgentGuard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  agentguard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Run AgentGuard (CI)
+        run: npx agentguard test --ci --reporter json > .agentguard-ci-report.json
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+      - name: Upload AgentGuard report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentguard-ci-report
+          path: .agentguard-ci-report.json

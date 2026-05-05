@@ -1,0 +1,20 @@
+{
+  "name": "agentguard",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "build:core": "npm run build --workspace @agentguard/core",
+    "build:cli": "npm run build --workspace @agentguard/cli",
+    "test": "npm run test:core && npm run test:cli",
+    "test:core": "npm run test --workspace @agentguard/core",
+    "test:cli": "npm run test --workspace @agentguard/cli"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "typescript": "^5.9.3"
+  }
+}
