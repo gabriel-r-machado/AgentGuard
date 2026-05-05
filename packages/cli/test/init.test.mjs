@@ -31,16 +31,21 @@ test("init creates scaffold files and is idempotent", () => {
     assert.match(first.stdout, /created: agentguard\.config\.ts/);
     assert.match(first.stdout, /created: ai-tests\/example\.test\.ts/);
     assert.match(first.stdout, /created: \.env\.example/);
+    assert.match(first.stdout, /created: \.gitignore/);
 
     assert.equal(existsSync(join(cwd, "agentguard.config.ts")), true);
     assert.equal(existsSync(join(cwd, "ai-tests", "example.test.ts")), true);
     assert.equal(existsSync(join(cwd, ".env.example")), true);
+    assert.equal(existsSync(join(cwd, ".gitignore")), true);
+    assert.match(readFileSync(join(cwd, ".gitignore"), "utf8"), /\.agentguard\//);
+    assert.match(readFileSync(join(cwd, ".gitignore"), "utf8"), /\.agentguard-ci-report\.json/);
 
     const second = runCli(cwd, ["init"]);
     assert.equal(second.status, 0);
     assert.match(second.stdout, /unchanged: agentguard\.config\.ts/);
     assert.match(second.stdout, /unchanged: ai-tests\/example\.test\.ts/);
     assert.match(second.stdout, /unchanged: \.env\.example/);
+    assert.match(second.stdout, /unchanged: \.gitignore/);
   } finally {
     rmSync(cwd, { recursive: true, force: true });
   }
@@ -84,8 +89,8 @@ test("init can generate a copy-paste-ready GitHub Actions workflow", () => {
     assert.match(workflow, /actions\/checkout@v5/);
     assert.match(workflow, /actions\/setup-node@v6/);
     assert.match(workflow, /node-version: 24/);
-    assert.match(workflow, /npm run build:cli/);
-    assert.match(workflow, /node packages\/cli\/dist\/index\.js test --ci --reporter json/);
+    assert.doesNotMatch(workflow, /npm run build:cli/);
+    assert.match(workflow, /npx agentguard test --ci --reporter json/);
     assert.match(workflow, /actions\/upload-artifact@v6/);
     assert.match(workflow, /OPENAI_API_KEY: \${{ secrets\.OPENAI_API_KEY }}/);
 

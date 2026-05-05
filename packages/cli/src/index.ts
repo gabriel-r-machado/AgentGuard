@@ -281,8 +281,43 @@ function runInit(options: InitOptions): InitResult {
   for (const file of fileMap) {
     results.push(writeFileSafely(options.cwd, file.path, file.content, options.yes));
   }
+  results.push(ensureGitignoreRules(options.cwd));
 
   return { files: results };
+}
+
+const AGENTGUARD_GITIGNORE_RULES = [".agentguard/", ".agentguard-ci-report.json"];
+
+function ensureGitignoreRules(cwd: string): InitFileResult {
+  const relativePath = ".gitignore";
+  const absolutePath = resolve(cwd, relativePath);
+  mkdirSync(dirname(absolutePath), { recursive: true });
+
+  if (!existsSync(absolutePath)) {
+    writeFileSync(
+      absolutePath,
+      `${AGENTGUARD_GITIGNORE_RULES.join("\n")}\n`,
+      "utf8",
+    );
+    return { path: relativePath, status: "created" };
+  }
+
+  const current = readFileSync(absolutePath, "utf8");
+  const existingRules = new Set(
+    current
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0),
+  );
+  const missingRules = AGENTGUARD_GITIGNORE_RULES.filter((rule) => !existingRules.has(rule));
+  if (missingRules.length === 0) {
+    return { path: relativePath, status: "unchanged" };
+  }
+
+  const normalizedCurrent = current.endsWith("\n") ? current : `${current}\n`;
+  const next = `${normalizedCurrent}${missingRules.join("\n")}\n`;
+  writeFileSync(absolutePath, next, "utf8");
+  return { path: relativePath, status: "updated" };
 }
 
 function writeFileSafely(
@@ -329,10 +364,14 @@ function buildConfigContent(provider: Provider, model: string): string {
 function buildExampleTestContent(): string {
   return `import { testAgent } from "agentguard";
 
-testAgent("example: should include ok", {
-  input: "Say ok",
+testAgent("profile-analysis: should include confidence and assumptions", {
+  input:
+    "Analyze this profile and summarize strengths, risks, and next steps. " +
+    "Profile: Product analyst with 4 years of experience in SQL, A/B testing, and stakeholder communication. " +
+    "Respond in English and include the exact words 'confidence' and 'assumptions'.",
   expected: {
-    mustInclude: ["ok"],
+    mustInclude: ["confidence", "assumptions"],
+    mustNotInclude: ["salary guarantee"],
   },
 });
 `;
@@ -365,11 +404,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build:cli
       - name: Run AgentGuard (CI)
         run: |
           set +e
-          node packages/cli/dist/index.js test --ci --reporter json > .agentguard-ci-report.json
+          npx agentguard test --ci --reporter json > .agentguard-ci-report.json
           status=$?
           if [ ! -s .agentguard-ci-report.json ]; then
             printf '{"schemaVersion":1,"summary":{"failed":1},"tests":[],"error":"agentguard did not emit json report; check workflow logs"}\n' > .agentguard-ci-report.json
