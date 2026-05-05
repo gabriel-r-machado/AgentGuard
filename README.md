@@ -17,7 +17,7 @@ Isso permite detectar regressão rápido antes de publicar mudanças de prompt, 
 ```bash
 npm ci
 npm run build
-npx agentguard init --yes --provider openai --with-github-action
+node packages/cli/dist/index.js init --yes --provider openai --with-github-action
 ```
 
 Esse comando gera:
@@ -46,19 +46,19 @@ testAgent("responde com saudacao", {
 Modo local (`stub`, sem custo de API):
 
 ```bash
-npx agentguard test
+node packages/cli/dist/index.js test
 ```
 
 Modo real (chama o provider de IA):
 
 ```bash
-npx agentguard test --execution provider --provider openai --model gpt-4.1-mini
+node packages/cli/dist/index.js test --execution provider --provider openai --model gpt-4.1-mini
 ```
 
 CI com saída estável para automação:
 
 ```bash
-npx agentguard test --ci --reporter json
+node packages/cli/dist/index.js test --ci --reporter json
 ```
 
 ## Variáveis de ambiente

@@ -81,8 +81,12 @@ test("init can generate a copy-paste-ready GitHub Actions workflow", () => {
     const workflowPath = join(cwd, ".github", "workflows", "agentguard.yml");
     assert.equal(existsSync(workflowPath), true);
     const workflow = readFileSync(workflowPath, "utf8");
-    assert.match(workflow, /npx agentguard test --ci --reporter json/);
-    assert.match(workflow, /actions\/upload-artifact@v4/);
+    assert.match(workflow, /actions\/checkout@v5/);
+    assert.match(workflow, /actions\/setup-node@v6/);
+    assert.match(workflow, /node-version: 24/);
+    assert.match(workflow, /npm run build:cli/);
+    assert.match(workflow, /node packages\/cli\/dist\/index\.js test --ci --reporter json/);
+    assert.match(workflow, /actions\/upload-artifact@v6/);
     assert.match(workflow, /OPENAI_API_KEY: \${{ secrets\.OPENAI_API_KEY }}/);
 
     const second = runCli(cwd, ["init", "--with-github-action", "--provider", "openai"]);
