@@ -1,10 +1,44 @@
 {
   "name": "agentguard",
-  "version": "0.1.0",
-  "private": true,
+  "version": "0.2.0",
+  "description": "Framework open source para testar respostas de agentes de IA com suites deterministicas, scans baseados em contrato e relatorios acionaveis.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gabriel-r-machado/AgentGuard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/gabriel-r-machado/AgentGuard/issues"
+  },
+  "homepage": "https://github.com/gabriel-r-machado/AgentGuard#readme",
+  "keywords": [
+    "ai",
+    "agents",
+    "testing",
+    "evals",
+    "llm",
+    "prompt-testing",
+    "typescript"
+  ],
+  "type": "module",
+  "main": "packages/core/dist/index.js",
+  "types": "packages/core/dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./packages/core/dist/index.d.ts",
+      "default": "./packages/core/dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "agentguard": "packages/cli/dist/index.js"
   },
+  "files": [
+    "README.md",
+    "CHANGELOG.md",
+    "packages/cli/dist",
+    "packages/core/dist"
+  ],
   "workspaces": [
     "packages/*"
   ],
@@ -19,13 +53,21 @@
     "agentguard:test": "npm run agentguard -- test",
     "agentguard:test:provider": "npm run agentguard -- test --execution provider",
     "agentguard:test:ci": "npm run agentguard -- test --ci --reporter json",
+    "agentguard:scan:dryrun": "npm run agentguard -- scan --dry-run",
+    "agentguard:doctor": "npm run agentguard -- doctor",
+    "agentguard:example:doctor": "npm run agentguard -- doctor --ci",
+    "agentguard:example:scan": "npm run agentguard -- scan --dry-run --ci",
+    "lint": "tsc -b --pretty false",
     "test": "npm run test:core && npm run test:cli",
     "test:core": "npm run test --workspace @agentguard/core",
     "test:cli": "npm run test --workspace @agentguard/cli"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "@google/genai": "^2.8.0",
     "typescript": "^5.9.3",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
     "@types/node": "^24.10.0"

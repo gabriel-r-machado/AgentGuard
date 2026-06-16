@@ -45,6 +45,9 @@ export function estimateModelCostUsd(input: {
   }
 
   const rate = resolveRate(input.provider, input.model);
+  if (!rate) {
+    return undefined;
+  }
   const inputCost = (input.usage.inputTokens / 1_000_000) * rate.inputPerMillionUsd;
   const outputCost = (input.usage.outputTokens / 1_000_000) * rate.outputPerMillionUsd;
   return roundUsd(inputCost + outputCost);
@@ -54,13 +57,19 @@ export function formatUsd(value: number): string {
   return value.toFixed(6);
 }
 
-function resolveRate(provider: AgentProvider, model: string): PriceRate {
+function resolveRate(provider: AgentProvider, model: string): PriceRate | undefined {
   const normalizedModel = model.trim().toLocaleLowerCase("en-US");
   const explicit = MODEL_PRICE_RATES[normalizedModel];
   if (explicit) {
     return explicit;
   }
-  return provider === "deepseek" ? DEEPSEEK_DEFAULT_RATE : OPENAI_DEFAULT_RATE;
+  if (provider === "deepseek") {
+    return DEEPSEEK_DEFAULT_RATE;
+  }
+  if (provider === "openai") {
+    return OPENAI_DEFAULT_RATE;
+  }
+  return undefined;
 }
 
 function roundUsd(value: number): number {

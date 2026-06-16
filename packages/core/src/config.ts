@@ -1,12 +1,20 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { Buffer } from "node:buffer";
 
 import ts from "typescript";
+import { z } from "zod";
 
-import type { AgentGuardConfig, ResolvedAgentGuardConfig } from "./types.js";
+import type {
+  AgentGuardConfig,
+  LlmRoleConfig,
+  LlmRoleName,
+  ResolvedAgentGuardConfig,
+  ResolvedLlmRoleConfig,
+} from "./types.js";
 
 const DEFAULT_CONFIG_FILENAME = "agentguard.config.ts";
+const SELF_PACKAGE_ENTRY_URL = new URL("./index.js", import.meta.url).href;
 
 const DEFAULTS = {
   testsDir: "./ai-tests",
@@ -16,22 +24,177 @@ const DEFAULTS = {
   temperature: 0.1,
   ciFailOnInconclusive: true,
   redactionEnabled: true,
+  projectLocale: "en-US",
+  projectPreset: "customer-support",
+  generationScenarios: 24,
+  generationMaxTurns: 4,
+  generationSeed: 42,
+  scanDryRunTools: true,
+  scanConcurrency: 2,
+  scanDefaultRepetitions: 1,
+  scanHighRepetitions: 1,
+  scanCriticalRepetitions: 2,
+  scanReportHtml: true,
 } as const;
 
-const TOP_LEVEL_KEYS = new Set([
-  "provider",
-  "model",
-  "testsDir",
-  "maxCostPerRun",
-  "timeoutMs",
-  "retries",
-  "temperature",
-  "ci",
-  "redaction",
+const agentProviderSchema = z.enum(["openai", "deepseek", "gemini", "anthropic"]);
+const stringRecordSchema = z.record(z.string(), z.string());
+const llmRoleConfigSchema = z
+  .object({
+    provider: agentProviderSchema.optional(),
+    model: z.string().min(1).optional(),
+    temperature: z.number().finite().optional(),
+    maxTokens: z.number().int().min(1).optional(),
+    timeoutMs: z.number().int().min(1).optional(),
+    retries: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+const fileSourceSchema = z
+  .object({
+    type: z.literal("file"),
+    path: z.string().min(1),
+  })
+  .strict();
+
+const globSourceSchema = z
+  .object({
+    type: z.literal("glob"),
+    pattern: z.string().min(1),
+  })
+  .strict();
+
+const snapshotSourceSchema = z
+  .object({
+    type: z.literal("snapshot"),
+    path: z.string().min(1),
+  })
+  .strict();
+
+const systemPromptSourceSchema = z.union([fileSourceSchema, snapshotSourceSchema]);
+const knowledgeSourceSchema = z.union([
+  fileSourceSchema,
+  globSourceSchema,
+  snapshotSourceSchema,
 ]);
 
-const CI_KEYS = new Set(["failOnInconclusive"]);
-const REDACTION_KEYS = new Set(["enabled", "patterns"]);
+const httpTargetSchema = z
+  .object({
+    type: z.literal("http"),
+    url: z.string().min(1),
+    headers: stringRecordSchema.optional(),
+    request: z
+      .object({
+        method: z.enum(["POST", "PUT", "PATCH"]).optional(),
+        body: z.unknown().optional(),
+        timeoutMs: z.number().int().min(1).optional(),
+        retries: z.number().int().min(0).optional(),
+      })
+      .strict()
+      .optional(),
+    response: z
+      .object({
+        textPath: z.string().min(1),
+        toolCallsPath: z.string().min(1).optional(),
+        retrievedContextPath: z.string().min(1).optional(),
+        metadataPath: z.string().min(1).optional(),
+        inputTokensPath: z.string().min(1).optional(),
+        outputTokensPath: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
+const directProviderTargetSchema = z
+  .object({
+    type: z.literal("provider"),
+    provider: agentProviderSchema.optional(),
+    model: z.string().min(1).optional(),
+    temperature: z.number().finite().optional(),
+    timeoutMs: z.number().int().min(1).optional(),
+  })
+  .strict();
+
+const configSchema = z
+  .object({
+    provider: agentProviderSchema.optional(),
+    model: z.string().min(1).optional(),
+    llm: z
+      .object({
+        generator: llmRoleConfigSchema.optional(),
+        judge: llmRoleConfigSchema.optional(),
+      })
+      .strict()
+      .optional(),
+    testsDir: z.string().min(1).optional(),
+    maxCostPerRun: z.number().finite().optional(),
+    timeoutMs: z.number().finite().optional(),
+    retries: z.number().int().min(0).optional(),
+    temperature: z.number().finite().optional(),
+    ci: z
+      .object({
+        failOnInconclusive: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+    redaction: z
+      .object({
+        enabled: z.boolean().optional(),
+        patterns: z.array(z.string()).optional(),
+      })
+      .strict()
+      .optional(),
+    project: z
+      .object({
+        name: z.string().min(1),
+        locale: z.string().min(1).optional(),
+        preset: z
+          .enum([
+            "customer-support",
+            "lead-scheduling",
+            "healthcare-lead-scheduling",
+          ])
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    sources: z
+      .object({
+        systemPrompt: systemPromptSourceSchema.optional(),
+        knowledge: z.array(knowledgeSourceSchema).optional(),
+      })
+      .strict()
+      .optional(),
+    generation: z
+      .object({
+        scenarios: z.number().int().min(1).optional(),
+        maxTurns: z.number().int().min(1).optional(),
+        seed: z.number().int().optional(),
+      })
+      .strict()
+      .optional(),
+    scan: z
+      .object({
+        dryRunTools: z.boolean().optional(),
+        llmProvider: agentProviderSchema.optional(),
+        llmModel: z.string().min(1).optional(),
+        target: z.union([httpTargetSchema, directProviderTargetSchema]).optional(),
+        concurrency: z.number().int().min(1).optional(),
+        repetitions: z
+          .object({
+            default: z.number().int().min(1).optional(),
+            high: z.number().int().min(1).optional(),
+            critical: z.number().int().min(1).optional(),
+          })
+          .strict()
+          .optional(),
+        reportHtml: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
 
 export type LoadAgentGuardConfigOptions = {
   cwd?: string;
@@ -43,6 +206,10 @@ export class AgentGuardConfigError extends Error {
     super(message);
     this.name = "AgentGuardConfigError";
   }
+}
+
+export function defineConfig<T extends AgentGuardConfig>(config: T): T {
+  return config;
 }
 
 export async function loadAgentGuardConfig(
@@ -60,11 +227,12 @@ export async function loadAgentGuardConfig(
 
   const source = readFileSync(configPath, "utf8");
   const config = await loadConfigModule(source, configPath);
-  return resolveAndValidateConfig(config, configPath);
+  return resolveAndValidateConfig(config, configPath, cwd);
 }
 
 async function loadConfigModule(source: string, filePath: string): Promise<unknown> {
-  const transpileResult = ts.transpileModule(source, {
+  const rewrittenSource = rewriteAgentGuardImports(source);
+  const transpileResult = ts.transpileModule(rewrittenSource, {
     compilerOptions: {
       module: ts.ModuleKind.ESNext,
       target: ts.ScriptTarget.ES2022,
@@ -88,174 +256,118 @@ async function loadConfigModule(source: string, filePath: string): Promise<unkno
   }
 }
 
+function rewriteAgentGuardImports(source: string): string {
+  return source
+    .replace(/from\s+["']agentguard["']/g, `from "${SELF_PACKAGE_ENTRY_URL}"`)
+    .replace(/from\s+["']@agentguard\/core["']/g, `from "${SELF_PACKAGE_ENTRY_URL}"`);
+}
+
 function resolveAndValidateConfig(
   value: unknown,
   filePath: string,
+  cwd: string,
 ): ResolvedAgentGuardConfig {
-  assertObject(value, "config", filePath);
-  assertNoUnknownKeys(value, TOP_LEVEL_KEYS, "config", filePath);
-
-  const provider = value.provider;
-  if (provider !== "openai" && provider !== "deepseek") {
-    throw errorAt(
-      "config.provider",
-      `must be "openai" or "deepseek", received ${formatValue(provider)}`,
-      filePath,
-    );
+  const parsed = configSchema.safeParse(value);
+  if (!parsed.success) {
+    throw buildConfigError(parsed.error.issues[0], filePath);
   }
 
-  const model = value.model;
-  if (typeof model !== "string" || model.trim() === "") {
-    throw errorAt(
-      "config.model",
-      `must be a non-empty string, received ${formatValue(model)}`,
-      filePath,
-    );
-  }
-
-  const testsDir = readOptionalString(value.testsDir, "config.testsDir", filePath) ?? DEFAULTS.testsDir;
-  const maxCostPerRun =
-    readOptionalNumber(value.maxCostPerRun, "config.maxCostPerRun", filePath) ??
-    DEFAULTS.maxCostPerRun;
-  const timeoutMs =
-    readOptionalNumber(value.timeoutMs, "config.timeoutMs", filePath) ?? DEFAULTS.timeoutMs;
-  const retries = readOptionalNumber(value.retries, "config.retries", filePath) ?? DEFAULTS.retries;
-  const temperature =
-    readOptionalNumber(value.temperature, "config.temperature", filePath) ??
-    DEFAULTS.temperature;
-
-  const ci = resolveCi(value.ci, filePath);
-  const redaction = resolveRedaction(value.redaction, filePath);
+  const config = parsed.data;
+  const projectName = config.project?.name ?? basename(cwd);
 
   return {
-    provider,
-    model,
-    testsDir,
-    maxCostPerRun,
-    timeoutMs,
-    retries,
-    temperature,
-    ci,
-    redaction,
+    provider: config.provider,
+    model: config.model,
+    llm: {
+      generator: resolveLlmRoleConfig(config, "generator"),
+      judge: resolveLlmRoleConfig(config, "judge"),
+    },
+    testsDir: config.testsDir ?? DEFAULTS.testsDir,
+    maxCostPerRun: config.maxCostPerRun ?? DEFAULTS.maxCostPerRun,
+    timeoutMs: config.timeoutMs ?? DEFAULTS.timeoutMs,
+    retries: config.retries ?? DEFAULTS.retries,
+    temperature: config.temperature ?? DEFAULTS.temperature,
+    ci: {
+      failOnInconclusive:
+        config.ci?.failOnInconclusive ?? DEFAULTS.ciFailOnInconclusive,
+    },
+    redaction: {
+      enabled: config.redaction?.enabled ?? DEFAULTS.redactionEnabled,
+      ...(config.redaction?.patterns
+        ? { patterns: config.redaction.patterns }
+        : {}),
+    },
+    project: {
+      name: projectName,
+      locale: config.project?.locale ?? DEFAULTS.projectLocale,
+      preset: config.project?.preset ?? DEFAULTS.projectPreset,
+    },
+    sources: {
+      systemPrompt: config.sources?.systemPrompt,
+      knowledge: config.sources?.knowledge ?? [],
+    },
+    generation: {
+      scenarios: config.generation?.scenarios ?? DEFAULTS.generationScenarios,
+      maxTurns: config.generation?.maxTurns ?? DEFAULTS.generationMaxTurns,
+      seed: config.generation?.seed ?? DEFAULTS.generationSeed,
+    },
+    scan: {
+      dryRunTools: config.scan?.dryRunTools ?? DEFAULTS.scanDryRunTools,
+      llmProvider: config.scan?.llmProvider,
+      llmModel: config.scan?.llmModel,
+      target: config.scan?.target,
+      concurrency: config.scan?.concurrency ?? DEFAULTS.scanConcurrency,
+      repetitions: {
+        default:
+          config.scan?.repetitions?.default ?? DEFAULTS.scanDefaultRepetitions,
+        high: config.scan?.repetitions?.high ?? DEFAULTS.scanHighRepetitions,
+        critical:
+          config.scan?.repetitions?.critical ?? DEFAULTS.scanCriticalRepetitions,
+      },
+      reportHtml: config.scan?.reportHtml ?? DEFAULTS.scanReportHtml,
+    },
   };
 }
 
-function resolveCi(value: unknown, filePath: string): ResolvedAgentGuardConfig["ci"] {
-  if (value === undefined) {
-    return { failOnInconclusive: DEFAULTS.ciFailOnInconclusive };
+function resolveLlmRoleConfig(
+  config: AgentGuardConfig,
+  role: LlmRoleName,
+): ResolvedLlmRoleConfig {
+  const roleConfig = config.llm?.[role];
+  const resolved: ResolvedLlmRoleConfig = {
+    provider: roleConfig?.provider ?? config.scan?.llmProvider ?? config.provider,
+    model: readRoleModelOverride(role) ?? roleConfig?.model ?? config.scan?.llmModel ?? config.model,
+    temperature: roleConfig?.temperature ?? config.temperature ?? DEFAULTS.temperature,
+    timeoutMs: roleConfig?.timeoutMs ?? config.timeoutMs ?? DEFAULTS.timeoutMs,
+    retries: roleConfig?.retries ?? config.retries ?? DEFAULTS.retries,
+  };
+  if (roleConfig?.maxTokens !== undefined) {
+    resolved.maxTokens = roleConfig.maxTokens;
   }
-
-  assertObject(value, "config.ci", filePath);
-  assertNoUnknownKeys(value, CI_KEYS, "config.ci", filePath);
-
-  const failOnInconclusive =
-    readOptionalBoolean(value.failOnInconclusive, "config.ci.failOnInconclusive", filePath) ??
-    DEFAULTS.ciFailOnInconclusive;
-
-  return { failOnInconclusive };
+  return resolved;
 }
 
-function resolveRedaction(
-  value: unknown,
+function readRoleModelOverride(role: LlmRoleName): string | undefined {
+  const envName =
+    role === "generator"
+      ? "AGENTGUARD_GENERATOR_MODEL"
+      : "AGENTGUARD_JUDGE_MODEL";
+  const value = process.env[envName]?.trim();
+  return value ? value : undefined;
+}
+
+function buildConfigError(
+  issue: z.ZodIssue | undefined,
   filePath: string,
-): ResolvedAgentGuardConfig["redaction"] {
-  if (value === undefined) {
-    return { enabled: DEFAULTS.redactionEnabled };
+): AgentGuardConfigError {
+  if (!issue) {
+    return new AgentGuardConfigError(
+      `Invalid config in "${filePath}".`,
+    );
   }
 
-  assertObject(value, "config.redaction", filePath);
-  assertNoUnknownKeys(value, REDACTION_KEYS, "config.redaction", filePath);
-
-  const enabled =
-    readOptionalBoolean(value.enabled, "config.redaction.enabled", filePath) ??
-    DEFAULTS.redactionEnabled;
-  const patterns = readOptionalStringArray(value.patterns, "config.redaction.patterns", filePath);
-
-  return patterns ? { enabled, patterns } : { enabled };
-}
-
-function readOptionalString(value: unknown, field: string, filePath: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "string") {
-    throw errorAt(field, `must be a string, received ${formatValue(value)}`, filePath);
-  }
-  return value;
-}
-
-function readOptionalNumber(value: unknown, field: string, filePath: string): number | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    throw errorAt(field, `must be a valid number, received ${formatValue(value)}`, filePath);
-  }
-  return value;
-}
-
-function readOptionalBoolean(value: unknown, field: string, filePath: string): boolean | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (typeof value !== "boolean") {
-    throw errorAt(field, `must be a boolean, received ${formatValue(value)}`, filePath);
-  }
-  return value;
-}
-
-function readOptionalStringArray(
-  value: unknown,
-  field: string,
-  filePath: string,
-): string[] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
-    throw errorAt(field, `must be an array of strings, received ${formatValue(value)}`, filePath);
-  }
-  return value;
-}
-
-function assertObject(value: unknown, field: string, filePath: string): asserts value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw errorAt(field, `must be an object, received ${formatValue(value)}`, filePath);
-  }
-}
-
-function assertNoUnknownKeys(
-  object: Record<string, unknown>,
-  allowed: Set<string>,
-  field: string,
-  filePath: string,
-): void {
-  for (const key of Object.keys(object)) {
-    if (!allowed.has(key)) {
-      const allowedKeys = [...allowed].join(", ");
-      throw errorAt(
-        `${field}.${key}`,
-        `is not supported. Allowed keys: ${allowedKeys}`,
-        filePath,
-      );
-    }
-  }
-}
-
-function errorAt(field: string, reason: string, filePath: string): AgentGuardConfigError {
-  return new AgentGuardConfigError(`Invalid config at "${field}" in "${filePath}": ${reason}`);
-}
-
-function formatValue(value: unknown): string {
-  if (value === undefined) {
-    return "undefined";
-  }
-  if (typeof value === "string") {
-    return `"${value}"`;
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
+  const path = issue.path.length > 0 ? issue.path.join(".") : "config";
+  return new AgentGuardConfigError(
+    `Invalid config at "config.${path}" in "${filePath}": ${issue.message}`,
+  );
 }

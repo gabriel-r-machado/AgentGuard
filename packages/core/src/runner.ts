@@ -2,8 +2,7 @@ import { collectAgentTestsFromFiles } from "./dsl.js";
 import { discoverAgentTestFiles } from "./discovery.js";
 import { loadAgentGuardConfig } from "./config.js";
 import { runAssertions } from "./assertions.js";
-import { createOpenAIProviderAdapter } from "./providers/openai.js";
-import { createDeepSeekProviderAdapter } from "./providers/deepseek.js";
+import { createProviderAdapter } from "./providers/factory.js";
 import { AgentGuardProviderError } from "./providers/types.js";
 import { estimateModelCostUsd, formatUsd } from "./cost.js";
 import { persistRunArtifact } from "./results-store.js";
@@ -11,6 +10,7 @@ import { runSnapshotAssertion } from "./snapshot.js";
 import { createPluginRuntime, runPluginAssertions } from "./plugins.js";
 
 import type {
+  AgentProvider,
   ResolvedAgentGuardConfig,
   TestResult,
   RunSummary,
@@ -37,7 +37,7 @@ export type RunAgentTestsOptions = {
   cwd?: string;
   configFile?: string;
   executor?: StubExecutor;
-  provider?: "openai" | "deepseek";
+  provider?: AgentProvider;
   model?: string;
   grep?: string;
   ci?: boolean;
@@ -243,18 +243,15 @@ function createProviderExecutor(
   config: ResolvedAgentGuardConfig,
   options: { fetchFn?: typeof fetch } = {},
 ): StubExecutor {
-  const adapter =
-    config.provider === "openai"
-      ? createOpenAIProviderAdapter({ fetchFn: options.fetchFn })
-      : config.provider === "deepseek"
-        ? createDeepSeekProviderAdapter({ fetchFn: options.fetchFn })
-        : undefined;
-
-  if (!adapter) {
+  if (!config.provider || !config.model) {
     throw new Error(
-      `Provider "${config.provider}" is not implemented yet. Configure provider "openai" or "deepseek", or pass a custom executor.`,
+      'Legacy test execution requires "provider" and "model" in agentguard.config.ts, or corresponding CLI overrides.',
     );
   }
+  const provider = config.provider;
+  const model = config.model;
+
+  const adapter = createProviderAdapter(provider, { fetchFn: options.fetchFn });
 
   return async ({ test }) => {
     try {
@@ -264,7 +261,7 @@ function createProviderExecutor(
           : test.spec.context;
 
       const response = await adapter.invoke({
-        model: config.model,
+        model,
         temperature: config.temperature,
         userInput: test.spec.input,
         context,
@@ -276,8 +273,8 @@ function createProviderExecutor(
         responseText: response.text,
         toolCalls: response.toolCalls,
         costUsd: estimateModelCostUsd({
-          provider: config.provider,
-          model: config.model,
+          provider,
+          model,
           usage: response.usage,
         }),
       };

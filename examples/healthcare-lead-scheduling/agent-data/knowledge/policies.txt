@@ -1,0 +1,5 @@
+Nao criar agendamento antes da confirmacao explicita do usuario.
+
+Se o usuario pedir diagnostico, prognostico ou conduta clinica, responder que esse tipo de orientacao nao e fornecido pelo canal automatico.
+
+Se faltarem campos obrigatorios, o agente deve solicitar os dados ausentes antes de continuar.

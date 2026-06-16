@@ -2,14 +2,31 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { runAgentTests } from "../../core/dist/index.js";
-import { formatTerminalReport, type TerminalReporter } from "./reporters.js";
+import {
+  runAgentTests,
+  runDoctor,
+  runScan,
+} from "../../core/dist/index.js";
+import {
+  formatDoctorReport,
+  type DiagnosticReporter,
+  formatScanReport,
+  formatTerminalReport,
+  type TerminalReporter,
+} from "./reporters.js";
 
-type Provider = "openai" | "deepseek";
+type Provider = "openai" | "deepseek" | "gemini" | "anthropic";
+
+const PROVIDER_VALUES = ["openai", "deepseek", "gemini", "anthropic"] as const;
+const DEFAULT_PROVIDER: Provider = "openai";
 
 type InitOptions = {
   cwd: string;
   provider: Provider;
+  generatorProvider: Provider;
+  generatorModel: string;
+  judgeProvider: Provider;
+  judgeModel: string;
   yes: boolean;
   withGithubAction: boolean;
 };
@@ -36,6 +53,19 @@ type InitResult = {
   files: InitFileResult[];
 };
 
+type ScanOptions = {
+  cwd: string;
+  dryRun: boolean;
+  regenerate: boolean;
+  saveBaseline: boolean;
+  ci: boolean;
+};
+
+type DoctorOptions = {
+  cwd: string;
+  ci: boolean;
+};
+
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
 
@@ -56,6 +86,13 @@ async function main(argv: string[]): Promise<number> {
       const reason = entry.reason ? ` (${entry.reason})` : "";
       process.stdout.write(`${entry.status}: ${entry.path}${reason}\n`);
     }
+    process.stdout.write(
+      [
+        'next: edit "agentguard.config.ts" to set "scan.target" for real execution.',
+        'next: run "npx agentguard scan --dry-run" to generate contract and suite artifacts.',
+        "note: the target stays separate from llm.generator and llm.judge provider settings.",
+      ].join("\n") + "\n",
+    );
     return 0;
   }
 
@@ -68,6 +105,24 @@ async function main(argv: string[]): Promise<number> {
     return runTest(parsed.options);
   }
 
+  if (command === "scan") {
+    const parsed = parseScanArgs(rest);
+    if (!parsed.ok) {
+      process.stderr.write(`${parsed.error}\n`);
+      return 2;
+    }
+    return runScanCommand(parsed.options);
+  }
+
+  if (command === "doctor") {
+    const parsed = parseDoctorArgs(rest);
+    if (!parsed.ok) {
+      process.stderr.write(`${parsed.error}\n`);
+      return 2;
+    }
+    return runDoctorCommand(parsed.options);
+  }
+
   process.stderr.write(`Unknown command "${command}".\n`);
   return 2;
 }
@@ -75,7 +130,11 @@ async function main(argv: string[]): Promise<number> {
 function parseInitArgs(args: string[]):
   | { ok: true; options: InitOptions }
   | { ok: false; error: string } {
-  let provider: Provider = "openai";
+  let provider: Provider = DEFAULT_PROVIDER;
+  let generatorProvider: Provider | undefined;
+  let generatorModel: string | undefined;
+  let judgeProvider: Provider | undefined;
+  let judgeModel: string | undefined;
   let yes = false;
   let withGithubAction = false;
 
@@ -87,13 +146,61 @@ function parseInitArgs(args: string[]):
     }
     if (current === "--provider") {
       const value = args[index + 1];
-      if (value !== "openai" && value !== "deepseek") {
+      if (!isProvider(value)) {
         return {
           ok: false,
-          error: 'Invalid value for "--provider". Use "openai" or "deepseek".',
+          error: `Invalid value for "--provider". Use ${formatProviderList()}.`,
         };
       }
       provider = value;
+      index += 1;
+      continue;
+    }
+    if (current === "--generator-provider") {
+      const value = args[index + 1];
+      if (!isProvider(value)) {
+        return {
+          ok: false,
+          error: `Invalid value for "--generator-provider". Use ${formatProviderList()}.`,
+        };
+      }
+      generatorProvider = value;
+      index += 1;
+      continue;
+    }
+    if (current === "--generator-model") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        return {
+          ok: false,
+          error: 'Missing value for "--generator-model".',
+        };
+      }
+      generatorModel = value;
+      index += 1;
+      continue;
+    }
+    if (current === "--judge-provider") {
+      const value = args[index + 1];
+      if (!isProvider(value)) {
+        return {
+          ok: false,
+          error: `Invalid value for "--judge-provider". Use ${formatProviderList()}.`,
+        };
+      }
+      judgeProvider = value;
+      index += 1;
+      continue;
+    }
+    if (current === "--judge-model") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) {
+        return {
+          ok: false,
+          error: 'Missing value for "--judge-model".',
+        };
+      }
+      judgeModel = value;
       index += 1;
       continue;
     }
@@ -108,13 +215,89 @@ function parseInitArgs(args: string[]):
     };
   }
 
+  const resolvedGeneratorProvider = generatorProvider ?? provider;
+  const resolvedJudgeProvider = judgeProvider ?? provider;
   return {
     ok: true,
     options: {
       cwd: process.cwd(),
-      provider,
+      provider: resolvedGeneratorProvider,
+      generatorProvider: resolvedGeneratorProvider,
+      generatorModel: generatorModel ?? getDefaultModel(resolvedGeneratorProvider),
+      judgeProvider: resolvedJudgeProvider,
+      judgeModel: judgeModel ?? getDefaultModel(resolvedJudgeProvider),
       yes,
       withGithubAction,
+    },
+  };
+}
+
+function parseScanArgs(args: string[]):
+  | { ok: true; options: ScanOptions }
+  | { ok: false; error: string } {
+  let dryRun = false;
+  let regenerate = false;
+  let saveBaseline = false;
+  let ci = false;
+
+  for (const current of args) {
+    if (current === "--dry-run") {
+      dryRun = true;
+      continue;
+    }
+    if (current === "--regenerate") {
+      regenerate = true;
+      continue;
+    }
+    if (current === "--save-baseline") {
+      saveBaseline = true;
+      continue;
+    }
+    if (current === "--ci") {
+      ci = true;
+      continue;
+    }
+
+    return {
+      ok: false,
+      error: `Unknown flag "${current}" for "scan".`,
+    };
+  }
+
+  return {
+    ok: true,
+    options: {
+      cwd: process.cwd(),
+      dryRun,
+      regenerate,
+      saveBaseline,
+      ci,
+    },
+  };
+}
+
+function parseDoctorArgs(args: string[]):
+  | { ok: true; options: DoctorOptions }
+  | { ok: false; error: string } {
+  let ci = false;
+
+  for (const current of args) {
+    if (current === "--ci") {
+      ci = true;
+      continue;
+    }
+
+    return {
+      ok: false,
+      error: `Unknown flag "${current}" for "doctor".`,
+    };
+  }
+
+  return {
+    ok: true,
+    options: {
+      cwd: process.cwd(),
+      ci,
     },
   };
 }
@@ -139,10 +322,10 @@ function parseTestArgs(args: string[]):
 
     if (current === "--provider") {
       const value = args[index + 1];
-      if (value !== "openai" && value !== "deepseek") {
+      if (!isProvider(value)) {
         return {
           ok: false,
-          error: 'Invalid value for "--provider". Use "openai" or "deepseek".',
+          error: `Invalid value for "--provider". Use ${formatProviderList()}.`,
         };
       }
       provider = value;
@@ -246,19 +429,60 @@ async function runTest(options: TestOptions): Promise<number> {
   }
 }
 
-function formatError(error: unknown): string {
-  if (error instanceof Error) {
-    return `agentguard test failed: ${error.message}`;
+async function runScanCommand(options: ScanOptions): Promise<number> {
+  try {
+    const result = await runScan({
+      cwd: options.cwd,
+      dryRun: options.dryRun,
+      regenerate: options.regenerate,
+      saveBaseline: options.saveBaseline,
+      ci: options.ci,
+    });
+    const reporter: DiagnosticReporter = options.ci ? "ci" : "pretty";
+    process.stdout.write(formatScanReport(result, reporter));
+    if (result.requiresRegenerate) {
+      return 1;
+    }
+    if ((result.report?.summary.failedScenarios ?? 0) > 0) {
+      return 1;
+    }
+    return 0;
+  } catch (error) {
+    process.stderr.write(`${formatCommandError("scan", error)}\n`);
+    return 2;
   }
-  return `agentguard test failed: ${String(error)}`;
+}
+
+async function runDoctorCommand(options: DoctorOptions): Promise<number> {
+  try {
+    const result = await runDoctor({
+      cwd: options.cwd,
+    });
+    const reporter: DiagnosticReporter = options.ci ? "ci" : "pretty";
+    process.stdout.write(formatDoctorReport(result, reporter));
+    return result.status === "error" ? 2 : 0;
+  } catch (error) {
+    process.stderr.write(`${formatCommandError("doctor", error)}\n`);
+    return 2;
+  }
+}
+
+function formatError(error: unknown): string {
+  return formatCommandError("test", error);
+}
+
+function formatCommandError(command: string, error: unknown): string {
+  if (error instanceof Error) {
+    return `agentguard ${command} failed: ${error.message}`;
+  }
+  return `agentguard ${command} failed: ${String(error)}`;
 }
 
 function runInit(options: InitOptions): InitResult {
-  const model = options.provider === "deepseek" ? "deepseek-chat" : "gpt-4.1-mini";
   const fileMap: Array<{ path: string; content: string }> = [
     {
       path: "agentguard.config.ts",
-      content: buildConfigContent(options.provider, model),
+      content: buildConfigContent(options),
     },
     {
       path: "ai-tests/example.test.ts",
@@ -266,7 +490,15 @@ function runInit(options: InitOptions): InitResult {
     },
     {
       path: ".env.example",
-      content: buildEnvExampleContent(options.provider),
+      content: buildEnvExampleContent(),
+    },
+    {
+      path: "agent-data/system-prompt.md",
+      content: buildSystemPromptContent(),
+    },
+    {
+      path: "agent-data/knowledge/faq.md",
+      content: buildKnowledgeFaqContent(),
     },
   ];
 
@@ -286,7 +518,11 @@ function runInit(options: InitOptions): InitResult {
   return { files: results };
 }
 
-const AGENTGUARD_GITIGNORE_RULES = [".agentguard/", ".agentguard-ci-report.json"];
+const AGENTGUARD_GITIGNORE_RULES = [
+  ".agentguard/",
+  ".agentguard-ci-report.json",
+  ".agentguard-ci-scan.txt",
+];
 
 function ensureGitignoreRules(cwd: string): InitFileResult {
   const relativePath = ".gitignore";
@@ -351,13 +587,47 @@ function writeFileSafely(
   return { path: relativePath, status: "updated" };
 }
 
-function buildConfigContent(provider: Provider, model: string): string {
-  return `export default {
-  provider: "${provider}",
-  model: "${model}",
+function buildConfigContent(options: InitOptions): string {
+  return `import { defineConfig } from "agentguard";
+
+export default defineConfig({
+  provider: "${options.provider}",
+  model: "${options.generatorModel}",
+  llm: {
+    generator: {
+      provider: "${options.generatorProvider}",
+      model: "${options.generatorModel}"
+    },
+    judge: {
+      provider: "${options.judgeProvider}",
+      model: "${options.judgeModel}"
+    }
+  },
   testsDir: "./ai-tests",
   maxCostPerRun: 0.2,
-};
+  project: {
+    name: "my-agent",
+    locale: "en-US",
+    preset: "customer-support"
+  },
+  sources: {
+    systemPrompt: {
+      type: "file",
+      path: "./agent-data/system-prompt.md"
+    },
+    knowledge: [
+      {
+        type: "glob",
+        pattern: "./agent-data/knowledge/**/*.{md,txt,json}"
+      }
+    ]
+  },
+  generation: {
+    scenarios: 24,
+    maxTurns: 4,
+    seed: 42
+  }
+});
 `;
 }
 
@@ -377,15 +647,39 @@ testAgent("profile-analysis: should include confidence and assumptions", {
 `;
 }
 
-function buildEnvExampleContent(provider: Provider): string {
-  if (provider === "deepseek") {
-    return "DEEPSEEK_API_KEY=\nOPENAI_API_KEY=\n";
-  }
-  return "OPENAI_API_KEY=\nDEEPSEEK_API_KEY=\n";
+function buildEnvExampleContent(): string {
+  return [
+    "OPENAI_API_KEY=",
+    "DEEPSEEK_API_KEY=",
+    "GEMINI_API_KEY=",
+    "ANTHROPIC_API_KEY=",
+    "AGENTGUARD_GENERATOR_MODEL=",
+    "AGENTGUARD_JUDGE_MODEL=",
+    "",
+  ].join("\n");
+}
+
+function buildSystemPromptContent(): string {
+  return [
+    "You are a concise and helpful customer support agent.",
+    "Do not invent unsupported details.",
+    "Ask clarifying questions before committing to an answer when information is missing.",
+    "Hand sensitive situations to a human teammate when needed.",
+  ].join("\n");
+}
+
+function buildKnowledgeFaqContent(): string {
+  return [
+    "# FAQ",
+    "",
+    "- Support hours: Monday to Friday, 08:00-18:00.",
+    "- Collect name and preferred contact before scheduling.",
+    "- Do not provide medical, legal, or financial advice in chat.",
+  ].join("\n");
 }
 
 function buildGithubActionsWorkflowContent(provider: Provider): string {
-  const secretName = provider === "deepseek" ? "DEEPSEEK_API_KEY" : "OPENAI_API_KEY";
+  void provider;
   return `name: AgentGuard
 
 on:
@@ -404,27 +698,44 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - name: Run AgentGuard (CI)
+      - name: Doctor check
+        run: npx agentguard doctor --ci
+      - name: Generate scan artifacts
         run: |
-          set +e
-          npx agentguard test --ci --reporter json > .agentguard-ci-report.json
-          status=$?
-          if [ ! -s .agentguard-ci-report.json ]; then
-            printf '{"schemaVersion":1,"summary":{"failed":1},"tests":[],"error":"agentguard did not emit json report; check workflow logs"}\n' > .agentguard-ci-report.json
-          fi
-          exit $status
-        env:
-          ${secretName}: \${{ secrets.${secretName} }}
+          npx agentguard scan --dry-run --ci | tee .agentguard-ci-scan.txt
       - name: Upload AgentGuard report
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: agentguard-ci-report
-          path: .agentguard-ci-report.json
+          name: agentguard-artifacts
+          path: |
+            .agentguard/
+            .agentguard-ci-scan.txt
 `;
 }
 
 const exitCode = await main(process.argv.slice(2));
 if (exitCode !== 0) {
   process.exitCode = exitCode;
+}
+
+function isProvider(value: string | undefined): value is Provider {
+  return Boolean(value) && PROVIDER_VALUES.includes(value as Provider);
+}
+
+function formatProviderList(): string {
+  return PROVIDER_VALUES.map((value) => `"${value}"`).join(", ");
+}
+
+function getDefaultModel(provider: Provider): string {
+  if (provider === "deepseek") {
+    return "deepseek-chat";
+  }
+  if (provider === "gemini") {
+    return "gemini-2.5-flash";
+  }
+  if (provider === "anthropic") {
+    return "claude-sonnet-4-0";
+  }
+  return "gpt-4.1-mini";
 }

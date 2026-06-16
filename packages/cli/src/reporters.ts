@@ -1,6 +1,12 @@
-import type { RunAgentTestsResult, TestResult } from "@agentguard/core";
+import type {
+  DoctorResult,
+  RunAgentTestsResult,
+  ScanRunResult,
+  TestResult,
+} from "@agentguard/core";
 
 export type TerminalReporter = "pretty" | "ci" | "json";
+export type DiagnosticReporter = "pretty" | "ci";
 
 export function formatTerminalReport(
   result: RunAgentTestsResult,
@@ -13,6 +19,31 @@ export function formatTerminalReport(
     return formatCiReport(result);
   }
   return formatPrettyReport(result);
+}
+
+export function formatScanReport(
+  result: ScanRunResult,
+  reporter: DiagnosticReporter = "pretty",
+): string {
+  if (reporter === "ci") {
+    return formatScanCiReport(result);
+  }
+  return formatScanPrettyReport(result);
+}
+
+export function formatDoctorReport(
+  result: DoctorResult,
+  reporter: DiagnosticReporter = "pretty",
+): string {
+  if (reporter === "ci") {
+    return formatDoctorCiReport(result);
+  }
+
+  const lines = [`Doctor status: ${result.status.toUpperCase()}`];
+  for (const check of result.checks) {
+    lines.push(`- [${check.status.toUpperCase()}] ${check.id}: ${check.message}`);
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function formatPrettyReport(result: RunAgentTestsResult): string {
@@ -119,6 +150,101 @@ function formatJsonReport(result: RunAgentTestsResult): string {
   return `${JSON.stringify(payload, null, 2)}\n`;
 }
 
+function formatScanPrettyReport(result: ScanRunResult): string {
+  const lines = [
+    "Scan summary:",
+    `- mode: ${result.dryRun ? "dry-run" : "live"}`,
+    `- contract: ${result.contractStatus} (${result.artifactPaths.contract})`,
+    `- suite: ${result.suiteStatus} (${result.artifactPaths.suite})`,
+    `- manifest: ${result.artifactPaths.manifest}`,
+    `- sourceHash: ${result.sources.sourceHash}`,
+    `- facts: ${result.contract?.facts.length ?? 0}`,
+    `- scenarios: ${result.suite?.scenarios.length ?? 0}`,
+  ];
+
+  if (result.report) {
+    lines.push(`- result: ${result.report.summary.failedScenarios > 0 ? "fail" : "pass"}`);
+    lines.push(`- executedScenarios: ${result.report.summary.totalScenarios}`);
+    lines.push(`- passedScenarios: ${result.report.summary.passedScenarios}`);
+    lines.push(`- failedScenarios: ${result.report.summary.failedScenarios}`);
+    lines.push(`- criticalFailures: ${result.report.summary.criticalFailures}`);
+    lines.push(`- overallScore: ${(result.report.summary.overallScore * 100).toFixed(1)}%`);
+    lines.push(`- consistency: ${(result.report.summary.consistency * 100).toFixed(1)}%`);
+    lines.push(`- reportJson: ${result.artifactPaths.reportJson ?? "n/a"}`);
+    if (result.artifactPaths.reportHtml) {
+      lines.push(`- reportHtml: ${result.artifactPaths.reportHtml}`);
+    }
+    if (result.artifactPaths.baseline) {
+      lines.push(`- baseline: ${result.artifactPaths.baseline}`);
+    }
+    if (result.report.baselineComparison) {
+      lines.push(
+        `- baselineDelta: ${formatSignedPercent(
+          result.report.baselineComparison.currentOverallScore -
+            (result.report.baselineComparison.previousOverallScore ?? 0),
+        )}`,
+      );
+    }
+  } else {
+    lines.push(
+      `- execution: ${(result.scenarioResults?.length ?? 0) > 0 ? "completed" : "skipped"}`,
+    );
+  }
+
+  if (result.warnings.length > 0) {
+    lines.push("");
+    lines.push("Warnings:");
+    for (const warning of result.warnings) {
+      lines.push(`- ${warning}`);
+    }
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function formatScanCiReport(result: ScanRunResult): string {
+  const status = getScanStatus(result);
+  const summary = result.report?.summary;
+  const lines = [
+    [
+      "SCAN",
+      `status=${status}`,
+      `dryRun=${String(result.dryRun)}`,
+      `contract=${result.contractStatus}`,
+      `suite=${result.suiteStatus}`,
+      `scenarios=${summary?.totalScenarios ?? result.suite?.scenarios.length ?? 0}`,
+      `failed=${summary?.failedScenarios ?? 0}`,
+      `critical=${summary?.criticalFailures ?? 0}`,
+      `score=${summary ? summary.overallScore.toFixed(3) : "n/a"}`,
+    ].join("|"),
+  ];
+
+  if (result.artifactPaths.reportJson) {
+    lines.push(`PATH|reportJson=${result.artifactPaths.reportJson}`);
+  }
+  if (result.artifactPaths.reportHtml) {
+    lines.push(`PATH|reportHtml=${result.artifactPaths.reportHtml}`);
+  }
+  if (result.artifactPaths.baseline) {
+    lines.push(`PATH|baseline=${result.artifactPaths.baseline}`);
+  }
+  for (const warning of result.warnings) {
+    lines.push(`WARNING|${sanitizeForCi(warning)}`);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+function formatDoctorCiReport(result: DoctorResult): string {
+  const lines = [`DOCTOR|status=${result.status}`];
+  for (const check of result.checks) {
+    lines.push(
+      `CHECK|${check.status.toUpperCase()}|${check.id}|${sanitizeForCi(check.message)}`,
+    );
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 function collectFailureDetails(results: TestResult[]): Array<{ testId: string; message: string }> {
   const details: Array<{ testId: string; message: string }> = [];
   for (const result of results) {
@@ -148,4 +274,19 @@ function formatStatusLabel(status: TestResult["status"]): string {
     return "INCONCLUSIVE";
   }
   return "FAIL";
+}
+
+function getScanStatus(result: ScanRunResult): "PASS" | "FAIL" | "STALE" {
+  if (result.requiresRegenerate) {
+    return "STALE";
+  }
+  if ((result.report?.summary.failedScenarios ?? 0) > 0) {
+    return "FAIL";
+  }
+  return "PASS";
+}
+
+function formatSignedPercent(value: number): string {
+  const percent = (value * 100).toFixed(1);
+  return value > 0 ? `+${percent}%` : `${percent}%`;
 }

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatTerminalReport } from "../dist/reporters.js";
+import {
+  formatDoctorReport,
+  formatScanReport,
+  formatTerminalReport,
+} from "../dist/reporters.js";
 
 const baseResult = {
   config: {
@@ -174,4 +178,55 @@ test("pretty reporter labels inconclusive status explicitly", () => {
 
   const output = formatTerminalReport(inconclusiveResult, "pretty");
   assert.match(output, /^INCONCLUSIVE gamma/m);
+});
+
+test("scan reporter summarizes artifact preparation", () => {
+  const output = formatScanReport({
+    dryRun: true,
+    config: baseResult.config,
+    sources: {
+      systemPrompt: {
+        id: "system-prompt",
+        title: "Prompt",
+        content: "x",
+        sourcePath: "system-prompt.md",
+        metadata: {},
+        contentHash: "hash",
+      },
+      knowledgeDocuments: [],
+      knowledgeChunks: [],
+      sourceHash: "source-hash",
+    },
+    contract: { facts: [] },
+    suite: { scenarios: [] },
+    manifest: undefined,
+    contractStatus: "created",
+    suiteStatus: "created",
+    warnings: ["Dry-run skipped any real agent execution after artifact preparation."],
+    artifactPaths: {
+      contract: "c:/tmp/contract.json",
+      suite: "c:/tmp/suite.json",
+      manifest: "c:/tmp/manifest.json",
+    },
+    requiresRegenerate: false,
+  });
+
+  assert.match(output, /Scan summary:/);
+  assert.match(output, /mode: dry-run/);
+  assert.match(output, /contract: created/);
+  assert.match(output, /Warnings:/);
+});
+
+test("doctor reporter prints check statuses", () => {
+  const output = formatDoctorReport({
+    status: "warn",
+    checks: [
+      { id: "config", status: "ok", message: "Configuration loaded." },
+      { id: "providers", status: "warn", message: "Provider env var missing." },
+    ],
+  });
+
+  assert.match(output, /Doctor status: WARN/);
+  assert.match(output, /\[OK\] config:/);
+  assert.match(output, /\[WARN\] providers:/);
 });

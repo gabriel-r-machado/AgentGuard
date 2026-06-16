@@ -16,21 +16,24 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run build:cli
-      - name: Run AgentGuard (CI)
+      - run: npm run build
+      - run: npm test
+      - name: Start example mock agent
+        run: node examples/healthcare-lead-scheduling/mock-agent.mjs &
+      - name: Doctor check
+        working-directory: examples/healthcare-lead-scheduling
+        run: node ../../packages/cli/dist/index.js doctor --ci
+      - name: Generate scan artifacts
+        working-directory: examples/healthcare-lead-scheduling
         run: |
-          set +e
-          node packages/cli/dist/index.js test --ci --reporter json > .agentguard-ci-report.json
-          status=$?
-          if [ ! -s .agentguard-ci-report.json ]; then
-            printf '{"schemaVersion":1,"summary":{"failed":1},"tests":[],"error":"agentguard did not emit json report; check workflow logs"}\n' > .agentguard-ci-report.json
-          fi
-          exit $status
+          node ../../packages/cli/dist/index.js scan --dry-run --ci | tee .agentguard-ci-scan.txt
         env:
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          MOCK_AGENT_URL: http://127.0.0.1:4010/chat
       - name: Upload AgentGuard report
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: agentguard-ci-report
-          path: .agentguard-ci-report.json
+          name: agentguard-example-artifacts
+          path: |
+            examples/healthcare-lead-scheduling/.agentguard/
+            examples/healthcare-lead-scheduling/.agentguard-ci-scan.txt

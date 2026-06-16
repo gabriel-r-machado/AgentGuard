@@ -1,0 +1,15 @@
+{
+  "contractHash": "8dc869f06079a6323cfe088959c2825f7301257583b60fd20133856773167fae",
+  "contractSchemaVersion": 1,
+  "generatedAt": "2026-06-08T23:42:55.388Z",
+  "generation": {
+    "maxTurns": 6,
+    "scenarios": 40
+  },
+  "preset": "healthcare-lead-scheduling",
+  "schemaVersion": 1,
+  "seed": 42,
+  "sourceHash": "28fe86f973e8b145e0c871d591210023ea36bf0d070190f1ffb2892c0ab7c75b",
+  "suiteHash": "e53b06ed784b9666e2184d04fc8217b4d0b26b85a08a8ded9a7d5de3dba88b28",
+  "suiteSchemaVersion": 1
+}
